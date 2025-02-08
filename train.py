@@ -24,6 +24,8 @@ device_id = "0"
 os.environ['CUDA_LAUNCH_BLOCKING'] = device_id
 
 device = torch.device("cuda:" + device_id if torch.cuda.is_available() else "cpu")
+torch.backends.cudnn.benchmark = True  # Key update: enable cuDNN benchmarking
+
 
 now = int(time.time())
 timeArr = time.localtime(now)
@@ -102,7 +104,8 @@ data_iter = data.DataLoader(
     dataset=dataset,
     shuffle=True,
     batch_size=args.args.batch_size,
-    num_workers=4
+    num_workers=4,
+    pin_memory=True  # ✅ Key update: use pinned memory for faster transfer
 )
 
 iter_num = int(dataset.__len__() / args.args.batch_size)
@@ -178,72 +181,76 @@ def train(epoch):
     
     for step, x in enumerate(data_iter):
         print(f"Batch {step} loaded")  # Confirm batches are loading
-        vis = x[0].to(device)  # vis
-        ir = x[1].to(device)  # ir
+        vis = x[0].to(device, non_blocking=True) # ✅ Key update
+        ir = x[1].to(device, non_blocking=True)
 
         with torch.no_grad():
             vis_d, ir_d, _, index_r, _ = ImageDeformation(vis, ir)
 
-        vis_1 = base(vis)
-        vis_d_1 = base(vis_d)
-        ir_1 = base(ir)
-        ir_d_1 = base(ir_d)
+        with torch.cuda.amp.autocast(): # ✅ Key update
+            vis_1 = base(vis)
+            vis_d_1 = base(vis_d)
+            ir_1 = base(ir)
+            ir_d_1 = base(ir_d)
 
-        vis_fe = vis_MFE(vis_1)
-        ir_fe = ir_MFE(ir_1)
-        simple_fusion_f_1 = vis_fe + ir_fe
-        fusion_image_1, fusion_f_1 = fusion_decoder(simple_fusion_f_1)
-        vis_d_fe = vis_MFE(vis_d_1)
-        ir_d_fe = ir_MFE(ir_d_1)
-        simple_fusion_d_f_1 = vis_d_fe + ir_d_fe
-        fusion_d_image_1, fusion_d_f_1 = fusion_decoder(simple_fusion_d_f_1)
+            vis_fe = vis_MFE(vis_1)
+            ir_fe = ir_MFE(ir_1)
+            simple_fusion_f_1 = vis_fe + ir_fe
+            fusion_image_1, fusion_f_1 = fusion_decoder(simple_fusion_f_1)
 
-        vis_f = PAFE(vis_1)
-        ir_f = PAFE(ir_1)
-        simple_fusion_f = vis_f + ir_f
-        fusion_image, fusion_f = decoder(simple_fusion_f)
-        vis_d_f = PAFE(vis_d_1)
-        ir_d_f = PAFE(ir_d_1)
-        simple_fusion_d_f = vis_d_f + ir_d_f
-        fusion_d_image, fusion_d_f = decoder(simple_fusion_d_f)
+            vis_d_fe = vis_MFE(vis_d_1)
+            ir_d_fe = ir_MFE(ir_d_1)
+            simple_fusion_d_f_1 = vis_d_fe + ir_d_fe
+            fusion_d_image_1, fusion_d_f_1 = fusion_decoder(simple_fusion_d_f_1)
 
-        vis_e_f = MN_vis(vis_f)
-        ir_e_f = MN_ir(ir_f)
-        vis_d_e_f = MN_vis(vis_d_f)
-        ir_d_e_f = MN_ir(ir_d_f)
+            vis_f = PAFE(vis_1)
+            ir_f = PAFE(ir_1)
+            simple_fusion_f = vis_f + ir_f
+            fusion_image, fusion_f = decoder(simple_fusion_f)
 
-        VISDP_vis_f, _ = VISDP(vis_e_f)
-        IRDP_ir_f, _ = IRDP(ir_e_f)
-        VISDP_vis_d_f, _ = VISDP(vis_d_e_f)
-        IRDP_ir_d_f, _ = IRDP(ir_d_e_f)
+            vis_d_f = PAFE(vis_d_1)
+            ir_d_f = PAFE(ir_d_1)
+            simple_fusion_d_f = vis_d_f + ir_d_f
+            fusion_d_image, fusion_d_f = decoder(simple_fusion_d_f)
 
-        fixed_DP = VISDP_vis_f
-        moving_DP = IRDP_ir_d_f
+            vis_e_f = MN_vis(vis_f)
+            ir_e_f = MN_ir(ir_f)
+            vis_d_e_f = MN_vis(vis_d_f)
+            ir_d_e_f = MN_ir(ir_d_f)
 
-        moving_DP_lw = model.df_window_partition(moving_DP, args.args.large_w_size, args.args.small_w_size)
-        fixed_DP_sw = model.window_partition(fixed_DP, args.args.small_w_size, args.args.small_w_size)
+            VISDP_vis_f, _ = VISDP(vis_e_f)
+            IRDP_ir_f, _ = IRDP(ir_e_f)
+            VISDP_vis_d_f, _ = VISDP(vis_d_e_f)
+            IRDP_ir_d_f, _ = IRDP(ir_d_e_f)
 
-        correspondence_matrixs = model.CMAP(fixed_DP_sw, moving_DP_lw, MHCSA_vis, MHCSA_ir,
-                                                     True)
+            fixed_DP = VISDP_vis_f
+            moving_DP = IRDP_ir_d_f
 
-        ir_d_f_sample = model.feature_reorganization(correspondence_matrixs, ir_d_fe)
-        fusion_image_sample = fusion_module(vis_fe, ir_d_f_sample)
+            moving_DP_lw = model.df_window_partition(moving_DP, args.args.large_w_size, args.args.small_w_size)
+            fixed_DP_sw = model.window_partition(fixed_DP, args.args.small_w_size, args.args.small_w_size)
 
-        # calculate loss
-        loss_fusion = Lgrad(vis, ir, fusion_image) + Loss.Loss_intensity(vis, ir, fusion_image) + \
-                      Lgrad(vis_d, ir_d, fusion_d_image) + Loss.Loss_intensity(vis_d, ir_d, fusion_d_image)
-        loss_fusion_1 = Lgrad(vis, ir, fusion_image_1) + Loss.Loss_intensity(vis, ir, fusion_image_1) + \
-                        Lgrad(vis_d, ir_d, fusion_d_image_1) + Loss.Loss_intensity(vis_d, ir_d, fusion_d_image_1)
-        loss_0 = loss_fusion
-        loss_VISDP = - CC(VISDP_vis_f, fusion_f.detach()) - CC(VISDP_vis_d_f, fusion_d_f.detach())
-        loss_IRDP = - CC(IRDP_ir_f, fusion_f.detach()) - CC(IRDP_ir_d_f, fusion_d_f.detach())
-        loss_same = F.mse_loss(VISDP_vis_f, IRDP_ir_f) + F.mse_loss(VISDP_vis_d_f, IRDP_ir_d_f)
-        loss_1 = 2 * (loss_VISDP + loss_IRDP + loss_same)
-        loss_2 = Lgrad(vis, ir, fusion_image_sample) + Loss.Loss_intensity(vis, ir, fusion_image_sample)
-        loss_correspondence_matrix, loss_correspondence_matrix_1 = Lcorrespondence(
-            correspondence_matrixs, index_r)
-        loss_3 = 4 * (loss_correspondence_matrix + loss_correspondence_matrix_1)
-        loss = loss_0 + loss_1 + loss_2 + loss_3 + loss_fusion_1
+            correspondence_matrixs = model.CMAP(fixed_DP_sw, moving_DP_lw, MHCSA_vis, MHCSA_ir, True)
+
+            ir_d_f_sample = model.feature_reorganization(correspondence_matrixs, ir_d_fe)
+            fusion_image_sample = fusion_module(vis_fe, ir_d_f_sample)
+
+            loss_fusion = (Lgrad(vis, ir, fusion_image) +
+                           Loss.Loss_intensity(vis, ir, fusion_image) +
+                           Lgrad(vis_d, ir_d, fusion_d_image) +
+                           Loss.Loss_intensity(vis_d, ir_d, fusion_d_image))
+            loss_fusion_1 = (Lgrad(vis, ir, fusion_image_1) +
+                             Loss.Loss_intensity(vis, ir, fusion_image_1) +
+                             Lgrad(vis_d, ir_d, fusion_d_image_1) +
+                             Loss.Loss_intensity(vis_d, ir_d, fusion_d_image_1))
+            loss_0 = loss_fusion
+            loss_VISDP = - CC(VISDP_vis_f, fusion_f.detach()) - CC(VISDP_vis_d_f, fusion_d_f.detach())
+            loss_IRDP = - CC(IRDP_ir_f, fusion_f.detach()) - CC(IRDP_ir_d_f, fusion_d_f.detach())
+            loss_same = F.mse_loss(VISDP_vis_f, IRDP_ir_f) + F.mse_loss(VISDP_vis_d_f, IRDP_ir_d_f)
+            loss_1 = 2 * (loss_VISDP + loss_IRDP + loss_same)
+            loss_2 = Lgrad(vis, ir, fusion_image_sample) + Loss.Loss_intensity(vis, ir, fusion_image_sample)
+            loss_correspondence_matrix, loss_correspondence_matrix_1 = Lcorrespondence(correspondence_matrixs, index_r)
+            loss_3 = 4 * (loss_correspondence_matrix + loss_correspondence_matrix_1)
+            loss = loss_0 + loss_1 + loss_2 + loss_3 + loss_fusion_1
 
         # optimizer network
         optimizer_VISDP.zero_grad()

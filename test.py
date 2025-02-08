@@ -101,7 +101,7 @@ with torch.no_grad():
     MHCSA_ir = model.MHCSAB()
     fusion_module = model.FusionMoudle()
 
-pretrain_dir = r"/home/frank/Projects/MulFS-CAP/checkpoints/pretrained_models"
+pretrain_dir = r"/home/ubuntu/Projects/temp-Unregistered-Image-Fusion/checkpoints/pretrained_models"
 pretrain_dir_base = os.path.join(pretrain_dir, "base" + ".pth")
 pretrain_dir_vis_MFE = os.path.join(pretrain_dir, "vis_MFE" + ".pth")
 pretrain_dir_ir_MFE = os.path.join(pretrain_dir, "ir_MFE" + ".pth")
