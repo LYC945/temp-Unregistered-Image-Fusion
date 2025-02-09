@@ -22,9 +22,11 @@ def load_state_dir(network, pretrain_dir, device):
     network.eval()
 
 def save_img(x, save_dir):
-    x = x.squeeze(dim=0).permute(1, 2, 0)
+    if x.dim() == 4:
+        x = x[0]
+    x = x.permute(1, 2, 0)
     x = x.cpu().detach().numpy()
-    x = (x * 255.).astype(np.float64)
+    x = (x * 255.).astype(np.uint8)  # ✅ Key update: Using uint8 is common for images
     cv2.imwrite(save_dir, x)
 
 # --- Add this function to load a checkpoint ---

@@ -53,29 +53,32 @@ def warmup_learning_rate(optimizer, epoch_count):
 class TrainDataset(data.Dataset):
     def __init__(self, vis_dir, ir_dir, transform):
         super(TrainDataset, self).__init__()
-        self.vis_dir = vis_dir
-        self.ir_dir = ir_dir
-
-        self.vis_path, self.vis_paths = self.find_file(self.vis_dir)
-        self.ir_path, self.ir_paths = self.find_file(self.ir_dir)
-
-        assert (len(self.vis_path) == len(self.ir_path))
-
         self.transform = transform
 
-    def find_file(self, dir):
-        path = os.listdir(dir)
-        if os.path.isdir(os.path.join(dir, path[0])):
-            paths = []
-            for dir_name in os.listdir(dir):
-                for file_name in os.listdir(os.path.join(dir, dir_name)):
-                    paths.append(os.path.join(dir, file_name, file_name))
-        else:
-            paths = list(Path(dir).glob('*'))
-        return path, paths
+        # Build mapping for visible images
+        vis_files = {}
+        for root, _, files in os.walk(vis_dir):
+            for file in files:
+                # Optionally, filter by image extensions here
+                vis_files[file] = os.path.join(root, file)
+
+        # Build mapping for infrared images
+        ir_files = {}
+        for root, _, files in os.walk(ir_dir):
+            for file in files:
+                ir_files[file] = os.path.join(root, file)
+
+        # Find common file names between the two directories
+        common_files = sorted(set(vis_files.keys()).intersection(set(ir_files.keys())))
+        if not common_files:
+            raise ValueError(f"No matching file names found between {vis_dir} and {ir_dir}")
+
+        # Create paired lists using the common file names
+        self.vis_paths = [vis_files[file] for file in common_files]
+        self.ir_paths = [ir_files[file] for file in common_files]
 
     def read_image(self, path):
-        img = Image.open(str(path)).convert('L')
+        img = Image.open(path).convert('L')
         img = self.transform(img)
         return img
 
@@ -89,7 +92,7 @@ class TrainDataset(data.Dataset):
         return vis_img, ir_img
 
     def __len__(self):
-        return len(self.vis_path)
+        return len(self.vis_paths)
 
 
 tf = torchvision.transforms.Compose([
@@ -180,7 +183,7 @@ def train(epoch):
     epoch_loss_correspondence_predict = []
     
     for step, x in enumerate(data_iter):
-        print(f"Batch {step} loaded")  # Confirm batches are loading
+        print(f"Batch {step} loaded", flush=True)  # Confirm batches are loading
         vis = x[0].to(device, non_blocking=True) # ✅ Key update
         ir = x[1].to(device, non_blocking=True)
 
