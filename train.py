@@ -107,7 +107,7 @@ data_iter = data.DataLoader(
     dataset=dataset,
     shuffle=True,
     batch_size=args.args.batch_size,
-    num_workers=4,
+    num_workers=8,
     pin_memory=True  # ✅ Key update: use pinned memory for faster transfer
 )
 
@@ -133,6 +133,24 @@ with torch.no_grad():
     MHCSA_vis = model.MHCSAB()
     MHCSA_ir = model.MHCSAB()
     fusion_module = model.FusionMoudle()
+
+# Loading pre-trained models
+pretrain_dir = args.args.pretrain_model_dir
+
+if os.path.exists(pretrain_dir) and os.listdir(pretrain_dir):
+    utils.load_state_dir(base, os.path.join(pretrain_dir, "base.pth"), device)
+    utils.load_state_dir(vis_MFE, os.path.join(pretrain_dir, "vis_MFE.pth"), device)
+    utils.load_state_dir(ir_MFE, os.path.join(pretrain_dir, "ir_MFE.pth"), device)
+    utils.load_state_dir(PAFE, os.path.join(pretrain_dir, "PAFE.pth"), device)
+    utils.load_state_dir(VISDP, os.path.join(pretrain_dir, "VISDP.pth"), device)
+    utils.load_state_dir(IRDP, os.path.join(pretrain_dir, "IRDP.pth"), device)
+    utils.load_state_dir(MN_vis, os.path.join(pretrain_dir, "MN_vis.pth"), device)
+    utils.load_state_dir(MN_ir, os.path.join(pretrain_dir, "MN_ir.pth"), device)
+    utils.load_state_dir(MHCSA_vis, os.path.join(pretrain_dir, "MHCSA_vis.pth"), device)
+    utils.load_state_dir(MHCSA_ir, os.path.join(pretrain_dir, "MHCSA_ir.pth"), device)
+    utils.load_state_dir(fusion_module, os.path.join(pretrain_dir, "fusion_module.pth"), device)
+else:
+    print(f"Pretaind dir {pretrain_dir} deos not exist, skipping loading...")
 
 base.train()
 vis_MFE.train()
@@ -167,12 +185,12 @@ optimizer_FE = torch.optim.Adam([{'params': base.parameters()},
                                  {'params': fusion_decoder.parameters()},
                                  {'params': PAFE.parameters()}, {'params': decoder.parameters()},
                                  {'params': MN_vis.parameters()}, {'params': MN_ir.parameters()}],
-                                lr=0.0002)
-optimizer_VISDP = torch.optim.Adam(VISDP.parameters(), lr=0.0008)
-optimizer_IRDP = torch.optim.Adam(IRDP.parameters(), lr=0.0008)
+                                lr=0.0004)
+optimizer_VISDP = torch.optim.Adam(VISDP.parameters(), lr=0.0016)
+optimizer_IRDP = torch.optim.Adam(IRDP.parameters(), lr=0.0016)
 optimizer_MHCSAvis = torch.optim.Adam(MHCSA_vis.parameters(), lr=args.args.LR)
 optimizer_MHCSAir = torch.optim.Adam(MHCSA_ir.parameters(), lr=args.args.LR)
-optimizer_FusionModule = torch.optim.Adam(fusion_module.parameters(), lr=0.0002)
+optimizer_FusionModule = torch.optim.Adam(fusion_module.parameters(), lr=0.0004)
 
 
 def train(epoch):
