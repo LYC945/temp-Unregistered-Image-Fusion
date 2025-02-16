@@ -133,6 +133,8 @@ with torch.no_grad():
     MHCSA_vis = model.MHCSAB()
     MHCSA_ir = model.MHCSAB()
     fusion_module = model.FusionMoudle()
+    # ---- NEW: Instantiate Adaptive WLS Loss Module ----
+    adaptive_wls_loss = Loss.AdaptiveWLSLoss()
 
 # Loading pre-trained models
 pretrain_dir = args.args.pretrain_model_dir
@@ -152,39 +154,19 @@ if os.path.exists(pretrain_dir) and os.listdir(pretrain_dir):
 else:
     print(f"Pretaind dir {pretrain_dir} deos not exist, skipping loading...")
 
-base.train()
-vis_MFE.train()
-ir_MFE.train()
-fusion_decoder.train()
-PAFE.train()
-decoder.train()
-VISDP.train()
-IRDP.train()
-MN_vis.train()
-MN_ir.train()
-MHCSA_vis.train()
-MHCSA_ir.train()
-fusion_module.train()
+models = [base, vis_MFE, ir_MFE, fusion_decoder, PAFE, decoder,
+          MN_vis, MN_ir, VISDP, IRDP, MHCSA_vis, MHCSA_ir, fusion_module, adaptive_wls_loss]
+for m in models:
+    m.train()
+    m.to(device)
 
-base.to(device)
-vis_MFE.to(device)
-ir_MFE.to(device)
-fusion_decoder.to(device)
-PAFE.to(device)
-decoder.to(device)
-VISDP.to(device)
-IRDP.to(device)
-MN_vis.to(device)
-MN_ir.to(device)
-MHCSA_vis.to(device)
-MHCSA_ir.to(device)
-fusion_module.to(device)
 
 optimizer_FE = torch.optim.Adam([{'params': base.parameters()},
                                  {'params': vis_MFE.parameters()}, {'params': ir_MFE.parameters()},
                                  {'params': fusion_decoder.parameters()},
                                  {'params': PAFE.parameters()}, {'params': decoder.parameters()},
-                                 {'params': MN_vis.parameters()}, {'params': MN_ir.parameters()}],
+                                 {'params': MN_vis.parameters()}, {'params': MN_ir.parameters()},
+                                 {'params': adaptive_wls_loss.parameters()}],  # NEW: add adaptive loss parameters
                                 lr=0.0004)
 optimizer_VISDP = torch.optim.Adam(VISDP.parameters(), lr=0.0016)
 optimizer_IRDP = torch.optim.Adam(IRDP.parameters(), lr=0.0016)
@@ -256,9 +238,10 @@ def train(epoch):
             fusion_image_sample = fusion_module(vis_fe, ir_d_f_sample)
 
             loss_fusion = (Lgrad(vis, ir, fusion_image) +
-                           Loss.Loss_intensity(vis, ir, fusion_image) +
-                           Lgrad(vis_d, ir_d, fusion_d_image) +
-                           Loss.Loss_intensity(vis_d, ir_d, fusion_d_image))
+                        adaptive_wls_loss(vis, ir, fusion_image) +
+                        Lgrad(vis_d, ir_d, fusion_d_image) +
+                        adaptive_wls_loss(vis_d, ir_d, fusion_d_image))
+
             loss_fusion_1 = (Lgrad(vis, ir, fusion_image_1) +
                              Loss.Loss_intensity(vis, ir, fusion_image_1) +
                              Lgrad(vis_d, ir_d, fusion_d_image_1) +
